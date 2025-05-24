@@ -1,7 +1,6 @@
 # chuan.py - 缠论分析工具
 
 #### 🌈 项目介绍
-* 基于开源项目修改：<a target="_blank" href="https://github.com/YuYuKunKun/chanlun.py">YuYuKunKun chanlun</a>
 * 实现基本 笔 段 中枢 的识别 以及Tradingview前端
 * 针对A股进行了修改，可能不再支持BTC的分析，但有能力的可以加上一些条件还是可以继续支持的。
 * 增加了股票搜索查询及日期周期的选择。
@@ -39,3 +38,5 @@ http://127.0.0.1:8000/cycle
 
 #### 🙋‍♂️ 关于作者
 ![image](wx.png)
+
+* 基于开源项目修改：<a target="_blank" href="https://github.com/YuYuKunKun/chanlun.py">YuYuKunKun chanlun</a>
