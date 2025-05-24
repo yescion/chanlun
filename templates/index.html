@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <title>缠论K线分析</title>
+    <meta charset="utf-8" name="viewport"
+        content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0">
+    <script type="text/javascript"
+        src="{{ url_for('charting_library', path='/charting_library.standalone.js') }}"></script>
+
+    <style>
+        #status_indicator {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            z-index: 1000;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .connected {
+            background-color: #4CAF50;
+        }
+        .disconnected {
+            background-color: #F44336;
+        }
+        #data_source_selection {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+        #data_source_selection button {
+            padding: 5px 10px;
+            margin-left: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #data_source_selection button.active {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        /* 可折叠搜索表单样式 */
+        #search_form_container {
+            position: absolute;
+            top: 0;
+            left: 75%;
+            z-index: 1000;
+            width: 220px;
+        }
+        
+        #search_toggle {
+            position: absolute;
+            top: 0;
+            right: 0;
+            min-width: 60px;
+            height: 36px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            align-items: center;
+            font-size: 16px;
+            z-index: 1001;
+            gap: 4px;
+            padding: 0 10px;
+        }
+        
+        #search_toggle .stock-code {
+            font-weight: bold;
+            font-size: 15px;
+        }
+        
+        #search_toggle .arrow {
+            font-size: 16px;
+            margin-left: 2px;
+        }
+        
+        #search_form {
+            position: relative;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            overflow: hidden;
+            max-height: 0;
+            opacity: 0;
+            margin-top: 40px;
+        }
+        
+        #search_form.expanded {
+            max-height: 300px;
+            opacity: 1;
+        }
+        
+        #search_form input {
+            width: 150px;
+            padding: 5px;
+            margin-right: 5px;
+            border: none;
+            border-radius: 3px;
+        }
+        
+        #search_form button {
+            padding: 5px 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        
+        #search_form select {
+            width: 100%;
+            padding: 5px;
+            margin-top: 5px;
+            border: none;
+            border-radius: 3px;
+        }
+        
+        .form-group {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .form-group label {
+            flex: 0 0 70px;
+            font-size: 12px;
+        }
+        
+        .form-group-inline {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        
+        .form-group-inline select {
+            width: 100%;
+        }
+        
+        .form-divider {
+            height: 1px;
+            background: #555;
+            margin: 8px 0;
+        }
+        
+        /* 股票搜索结果样式 */
+        #search_results {
+            margin-top: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            display: none;
+            background-color: rgba(30, 30, 30, 0.9);
+            border-radius: 3px;
+        }
+        
+        .stock-item {
+            padding: 8px;
+            cursor: pointer;
+            border-bottom: 1px solid #444;
+            font-size: 12px;
+        }
+        
+        .stock-item:hover {
+            background-color: rgba(70, 70, 70, 0.9);
+        }
+        
+        .stock-item .stock-code {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .stock-item .stock-name {
+            margin-left: 5px;
+            color: #ddd;
+        }
+        
+        #search_btn {
+            width: auto;
+            margin-left: 5px;
+            padding: 5px 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+    </style>
+
+    <script type="text/javascript">
+        const shape_ids = []; // id 映射
+        const debug = false;
+        const exchange = "{{ exchange }}"; // eastmoney或bitstamp
+        const ticker = "{{ symbol }}";
+        const name = ticker; // "BTCUSD"
+        const description = "{{ name }}";
+        const interval = "{{ interval }}";
+        const step = "{{ step }}"; // 原始 step 值
+        const qmt_period = "{{ qmt_period }}"; // QMT 使用的周期字符串
+        const limit = "{{ limit }}";
+        const generator = "{{ generator }}";
+        const initial_start_date = "{{ start_date }}"; // YYYYMMDD
+        const initial_end_date = "{{ end_date }}";   // YYYYMMDD
+        const client_id = Math.random().toString(36).substr(2, 9); // 生成随机客户端ID
+        
+        // WebSocket连接管理
+        let socket;
+        let lastUpdateTime = null;
+        let socketReady = false;
+        let pendingMessages = [];
+        let reconnectAttempts = 0;
+        let onRealtimeCallback; // 保存实时回调引用
+        const maxReconnectAttempts = 5;
+        const reconnectInterval = 3000; // 重连间隔，毫秒
+        
+        // 创建WebSocket连接
+        function createWebSocket() {
+            socket = new WebSocket(`ws://${window.location.host}/ws/${client_id}`);
+            
+            socket.onopen = () => {
+                console.log("WebSocket connection established");
+                socketReady = true;
+                reconnectAttempts = 0;
+                updateStatus(true);
+                
+                // 处理之前队列中的消息
+                processPendingMessages();
+            };
+            
+            socket.onclose = (event) => {
+                console.log("WebSocket connection closed", event);
+                socketReady = false;
+                updateStatus(false, "连接已断开");
+                
+                // 尝试重新连接
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    const timeout = reconnectInterval * Math.pow(1.5, reconnectAttempts - 1);
+                    console.log(`尝试在${timeout}毫秒后重新连接 (${reconnectAttempts}/${maxReconnectAttempts})`);
+                    updateStatus(false, `${timeout/1000}秒后重连...`);
+                    
+                    setTimeout(createWebSocket, timeout);
+                } else {
+                    console.error("达到最大重连次数，停止重连");
+                    updateStatus(false, "连接失败，请刷新页面");
+                }
+            };
+            
+            socket.onerror = (error) => {
+                console.error("WebSocket error:", error);
+                socketReady = false;
+                updateStatus(false, "连接错误");
+            };
+            
+            socket.onmessage = function (event) {
+                const message = JSON.parse(event.data);
+                if (debug) console.info(message);
+                
+                // 添加更详细的日志
+                console.log(`收到消息类型: ${message.type}`);
+                
+                switch (message.type) {
+                    case "realtime":
+                        // 处理实时K线数据
+                        const bar = {
+                            time: new Date(message.timestamp).getTime(),
+                            close: message.close,
+                            open: message.open,
+                            high: message.high,
+                            low: message.low,
+                            volume: message.volume,
+                        };
+                        lastUpdateTime = new Date().getTime();
+                        updateStatus(true, message.data_source === 'eastmoney' ? '东方财富' : (message.data_source === 'longhuvip' ? '龙虎VIP' : 'QMT'));
+                        if (window.onRealtimeCallback) {
+                            window.onRealtimeCallback(bar);
+                        } else {
+                            console.warn('实时回调函数未设置，无法更新图表');
+                        }
+                        break;
+
+                    case "shape":
+                        // 处理图形数据
+                        if (message.cmd === "APPEND") {
+                            console.log(`添加图形: ${message.name}, ID: ${message.id}`);
+                            addShapeToChart(message);
+                        } else if (message.cmd === "REMOVE") {
+                            console.log(`删除图形: ID: ${message.id}`);
+                            delShapeById(message)
+                        } else if (message.cmd === "MODIFY") {
+                            console.log(`修改图形: ID: ${message.id}`);
+                            modifyShape(message)
+                        }
+                        break;
+                        
+                    case "query_result":
+                        console.log("查询结果:", message.data);
+                        break;
+                        
+                    case "status":
+                        // 处理状态更新
+                        console.log(`状态更新: ${message.message}`);
+                        lastUpdateTime = message.timestamp * 1000;
+                        updateStatus(true, `${message.data_source} - ${message.message}`);
+                        break;
+                        
+                    default:
+                        console.log("未知消息类型:", message);
+                }
+            };
+        }
+        
+        // 初始化WebSocket连接
+        createWebSocket();
+        
+        // 安全地发送WebSocket消息的函数
+        function safeSend(message) {
+            if (typeof message === 'object') {
+                message = JSON.stringify(message);
+            }
+            
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(message);
+                return true;
+            } else if (socket.readyState === WebSocket.CONNECTING) {
+                console.log("WebSocket仍在连接中，将消息加入队列", message);
+                pendingMessages.push(message);
+                return false;
+            } else {
+                console.error("WebSocket已关闭或出错，无法发送消息", message);
+                // 如果连接已关闭，尝试重新连接
+                if (socket.readyState === WebSocket.CLOSED && reconnectAttempts < maxReconnectAttempts) {
+                    pendingMessages.push(message);
+                    if (reconnectAttempts === 0) {
+                        createWebSocket();
+                    }
+                }
+                return false;
+            }
+        }
+        
+        // 尝试发送所有待处理的消息
+        function processPendingMessages() {
+            console.log(`处理 ${pendingMessages.length} 条待发送消息`);
+            while (pendingMessages.length > 0 && socket.readyState === WebSocket.OPEN) {
+                const message = pendingMessages.shift();
+                console.log("发送延迟消息:", message);
+                socket.send(message);
+            }
+        }
+        
+        function updateStatus(connected, message) {
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            const lastUpdateText = document.getElementById('last-update-time');
+            
+            if (connected) {
+                statusDot.className = 'status-dot connected';
+                statusText.textContent = message || '已连接';
+            } else {
+                statusDot.className = 'status-dot disconnected';
+                statusText.textContent = message || '已断开';
+            }
+            
+            if (lastUpdateTime) {
+                lastUpdateText.textContent = '最后更新: ' + new Date(lastUpdateTime).toLocaleTimeString();
+            }
+        }
+
+        let datafeed = {
+            onReady: (callback) => {
+                console.log("[Datafeed.onReady]: Method call");
+                setTimeout(() => callback({
+                    supports_search: false,
+                    supports_group_request: false,
+                    supports_marks: false,
+                    supports_timescale_marks: true,
+                    supports_time: true,
+                    supported_resolutions: [interval,], //["1s", "1", "3", "5", "6", "12", "24", "30", "48", "64", "128", "1H", "2H", "3H", "4H", "6H", "8H", "12H", "36H", "1D", "2D", "3D", "5D", "12D", "1W"],
+                }));
+            },
+
+            searchSymbols: async (
+                userInput,
+                exchange,
+                symbolType,
+                onResultReadyCallback,
+            ) => {
+                console.log("[Datafeed.searchSymbols]: Method call", userInput, exchange, symbolType);
+
+            },
+
+            resolveSymbol: async (
+                symbolName,
+                onSymbolResolvedCallback,
+                onResolveErrorCallback,
+                extension
+            ) => {
+                console.log("[Datafeed.resolveSymbol]: Method call", symbolName);
+                //return ;
+                const symbolInfo = {
+                    exchange: exchange,
+                    ticker: ticker,
+                    name: name,
+                    description: description,
+                    type: "",
+                    session: "24x7",
+                    timezone: "Asia/Shanghai",
+                    minmov: 1,
+                    pricescale: 100, // 精度 数值越高小数点
+                    visible_plots_set: "ohlcv",
+                    has_no_volume: true,
+                    has_weekly_and_monthly: false, // 周线 月线
+                    supported_resolutions: ["1", "3", "5", "15", "30", "1H", "2H", "4H", "6H", "12H", "1D", "3D"],
+                    volume_precision: 1,
+                    data_status: "streaming",
+                    has_intraday: true,
+                    //intraday_multipliers: [5,], //["1", "3", "5", "15", "30", "60", "120", "240", "360", "720"],
+                    has_seconds: false,
+                    //seconds_multipliers: ["1S",],
+                    has_daily: true,
+                    //daily_multipliers: ["1", "3"],
+                    has_ticks: true,
+                    monthly_multipliers: [],
+                    weekly_multipliers: [],
+                };
+                try {
+                    onSymbolResolvedCallback(symbolInfo);
+                } catch (err) {
+                    onResolveErrorCallback(err.message);
+                }
+
+            },
+
+            getBars: async (
+                symbolInfo,
+                resolution,
+                periodParams,
+                onHistoryCallback,
+                onErrorCallback,
+            ) => {
+                const { from, to, firstDataRequest } = periodParams;
+                console.log("[Datafeed.getBars]: Method call", symbolInfo, resolution, from, to, firstDataRequest);
+                try {
+                    onHistoryCallback([], { noData: true });
+
+                } catch (error) {
+                    console.log("[Datafeed.getBars]: Get error", error);
+                    onErrorCallback(error);
+                }
+            },
+
+            subscribeBars: (
+                symbolInfo,
+                resolution,
+                onRealtimeCallback,
+                subscriberUID,
+                onResetCacheNeededCallback,
+            ) => {
+                console.log(
+                    "[Datafeed.subscribeBars]: Method call with subscriberUID:",
+                    symbolInfo,
+                    resolution,
+                    subscriberUID,
+                );
+                
+                // 保存回调函数引用
+                window.onRealtimeCallback = onRealtimeCallback;
+            },
+
+            unsubscribeBars: (subscriberUID) => {
+                console.log(
+                    "[Datafeed.unsubscribeBars]: Method call with subscriberUID:",
+                    subscriberUID,
+                );
+                // 清除回调引用但不关闭WebSocket连接
+                window.onRealtimeCallback = null;
+            }
+        };
+
+
+        function addShapeToChart(obj) {
+            if (window.tvWidget) {
+                // 如果是买卖点箭头，默认不显示
+                if ((obj.name === "arrow_up" || obj.name === "arrow_down") && obj.properties && obj.properties.title && (obj.properties.title.startsWith("Bi") || obj.properties.title.startsWith("Duan"))) {
+                    obj.properties.visible = false;
+                }
+                const shape_id = window.tvWidget.chart().createMultipointShape(obj.points, obj.options);
+                shape_ids[obj.id] = shape_id;
+                const shape = window.tvWidget.chart().getShapeById(shape_id);
+                shape.setProperties(obj.properties);
+                shape.bringToFront();
+                return shape_id;
+            }
+        }
+
+        function delShapeById(obj) {
+            if (window.tvWidget) {
+                try {
+                    const id = shape_ids[obj.id];
+                    delete shape_ids[obj.id];
+                    const shape = window.tvWidget.chart().getShapeById(id);
+                    if (debug) console.log(id, shape);
+                    window.tvWidget.chart().removeEntity(id);
+                    console.log("del", id);
+                } catch (e) {
+                    console.log("删除失败", obj, e)
+                }
+
+            }
+        }
+
+        function modifyShape(obj) {
+            const id = shape_ids[obj.id];
+            try {
+                const shape = window.tvWidget.chart().getShapeById(id);
+                if (shape) {
+                    if (debug) console.log(obj);
+                    //console.log(shape.getProperties());
+                    shape.setPoints(obj.points);
+                    shape.setProperties(obj.properties);
+                    shape.bringToFront();
+
+                } else {
+                    console.log("Shape does not exist.");
+                }
+            } catch (e) {
+                console.log("修改失败", id, obj, e)
+            }
+        }
+
+        function initOnReady() {
+            //console.log("init widget");
+            const widget = (window.tvWidget = new TradingView.widget({
+                symbol: exchange + ":" + description, // Default symbol
+                interval: interval, // Default interval
+                timezone: "Asia/Shanghai",
+                fullscreen: true, // Displays the chart in the fullscreen mode
+                container: "tv_chart_container", // Reference to an attribute of the DOM element
+                datafeed: datafeed,
+                library_path: "charting_library/",
+                locale: "zh",
+                theme: "dark",
+                debug: false,
+                timeframe: "3D",
+                user_id: "public_user_id",
+                client_id: "yourserver.com",
+                favorites: {},
+                enabled_features: [
+                    "hide_left_toolbar_by_default",
+                    "dont_show_boolean_study_arguments",
+                    "hide_last_na_study_output",
+                    "match_time_to_market_hours",
+                    "minimalistic_price_scale",
+                    "bottom_toolbar",
+                    "timezone_menu",
+                    "scales_date_format"
+                ],
+                disabled_features: [
+                    "use_localstorage_for_settings",
+                    "header_symbol_search",
+                    "header_undo_redo",
+                    "header_screenshot",
+                    "header_resolutions",
+                    "header_compare",
+                    "header_chart_type",
+                    "go_to_date",
+                    "header_indicators",
+                    'symbol_search_hot_key',
+                    'timeframes_toolbar',
+                    'quick_search',
+                    'zoom_mouse_wheel_hint',
+                    'popup_hints'
+                ],
+                time_frames: [],
+                // 新增：设置A股习惯的K线颜色（红涨绿跌）
+                overrides: {
+                    "mainSeriesProperties.candleStyle.upColor": "#FF0000", // 红色
+                    "mainSeriesProperties.candleStyle.downColor": "#00B060", // 绿色
+                    "mainSeriesProperties.candleStyle.borderUpColor": "#FF0000",
+                    "mainSeriesProperties.candleStyle.borderDownColor": "#00B060",
+                    "mainSeriesProperties.candleStyle.wickUpColor": "#FF0000",
+                    "mainSeriesProperties.candleStyle.wickDownColor": "#00B060",
+                },
+            }));
+            widget.headerReady().then(function () {
+                widget.activeChart().createStudy("MACD");
+
+                function createHeaderButton(text, title, clickHandler, options) {
+                    const button = widget.createButton(options);
+                    button.setAttribute("title", title);
+                    button.textContent = text;
+                    button.addEventListener("click", clickHandler);
+                }
+
+                createHeaderButton("笔买卖点", "显示隐藏笔级别买卖点", function () {
+                    widget.activeChart().getAllShapes().forEach(({ name, id }) => {
+                        // Check if it's an arrow shape
+                        if (name === "arrow_up" || name === "arrow_down") {
+                            const shape = window.tvWidget.activeChart().getShapeById(id);
+                            if (shape) { // Ensure shape exists
+                                 const properties = shape.getProperties();
+                                 // Check if the title indicates it's a Bi level buy/sell point
+                                 if (properties.title && properties.title.startsWith("Bi")) {
+                                      shape.setProperties({ visible: !properties.visible });
+                                 }
+                            }
+                        }
+                    });
+                });
+
+                createHeaderButton("段买卖点", "显示隐藏段级别买卖点", function () {
+                    widget.activeChart().getAllShapes().forEach(({ name, id }) => {
+                        // Check if it's an arrow shape
+                        if (name === "arrow_up" || name === "arrow_down") {
+                            const shape = window.tvWidget.activeChart().getShapeById(id);
+                            if (shape) { // Ensure shape exists
+                                 const properties = shape.getProperties();
+                                 // Check if the title indicates it's a Duan level buy/sell point
+                                 if (properties.title && properties.title.startsWith("Duan")) {
+                                      shape.setProperties({ visible: !properties.visible });
+                                 }
+                            }
+                        }
+                    });
+                });
+
+                createHeaderButton("特征序列", "显示隐藏特征序列", function () {
+                    widget.activeChart().getAllShapes().forEach(({ name, id }) => {
+                        if (name === "trend_line") {
+                            const shape = window.tvWidget.chart().getShapeById(id);
+                            const properties = shape.getProperties();
+                            if (properties.text.indexOf("FeatureSequence<Bi>") === 0)
+                                shape.setProperties({ visible: !properties.visible })
+                        }
+                    });
+                });
+
+                createHeaderButton("笔", "显示隐藏笔", function () {
+                    widget.activeChart().getAllShapes().forEach(({ name, id }) => {
+                        if (name === "trend_line") {
+                            const shape = window.tvWidget.activeChart().getShapeById(id);
+                            const properties = shape.getProperties();
+                            if (properties.text.indexOf("Bi") === 0)
+                                shape.setProperties({ visible: !properties.visible })
+                        }
+                    });
+                });
+
+                createHeaderButton("段", "显示隐藏段", function () {
+                    widget.activeChart().getAllShapes().forEach(({ name, id }) => {
+                        if (name === "trend_line") {
+                            const shape = window.tvWidget.activeChart().getShapeById(id);
+                            const properties = shape.getProperties();
+                            if (properties.text.indexOf("Duan") === 0)
+                                shape.setProperties({ visible: !properties.visible })
+                        }
+                    });
+                });
+
+                createHeaderButton("笔中枢", "显示隐藏笔中枢", function () {
+                    widget.activeChart().getAllShapes().forEach(({ name, id }) => {
+                        if (name === "rectangle") {
+                            const shape = window.tvWidget.activeChart().getShapeById(id);
+                            const properties = shape.getProperties();
+                            if (properties.text.indexOf("ZhongShu<Bi>") === 0)
+                                shape.setProperties({ visible: !properties.visible })
+                        }
+                    });
+                });
+
+                createHeaderButton("段中枢", "显示隐藏段中枢", function () {
+                    widget.activeChart().getAllShapes().forEach(({ name, id }) => {
+                        if (name === "rectangle") {
+                            const shape = window.tvWidget.activeChart().getShapeById(id);
+                            const properties = shape.getProperties();
+                            if (properties.text.indexOf("ZhongShu<Duan>") === 0)
+                                shape.setProperties({ visible: !properties.visible })
+                        }
+                    });
+                });
+
+                widget.onChartReady(function () {
+                    // 获取当前日期输入框的值，如果它们存在且有值的话
+                    const startDateInput = document.getElementById('search_start_date');
+                    const endDateInput = document.getElementById('search_end_date');
+
+                    // 优先使用输入框的值，否则使用初始值
+                    // 注意：HTML date input 返回 YYYY-MM-DD，需要转换
+                    let current_start_date = initial_start_date;
+                    if (startDateInput && startDateInput.value) {
+                        current_start_date = startDateInput.value.replace(/-/g, '');
+                    }
+
+                    let current_end_date = initial_end_date;
+                    if (endDateInput && endDateInput.value) {
+                        current_end_date = endDateInput.value.replace(/-/g, '');
+                    }
+
+
+                    // 发送 ready 消息，包含日期和 QMT 周期
+                    safeSend({
+                        type: "ready",
+                        exchange: exchange,
+                        symbol: name,
+                        freq: qmt_period, // 发送 QMT 使用的周期字符串
+                        limit: limit,
+                        generator: generator,
+                        data_source: exchange, // 传递数据源信息
+                        start_date: current_start_date, // 添加 YYYYMMDD 格式的开始日期
+                        end_date: current_end_date,    // 添加 YYYYMMDD 格式的结束日期
+                        zhu_k_push: document.getElementById('k_push_mode') && document.getElementById('k_push_mode').checked ? 1 : 0 // 新增：逐K推送开关
+                    });
+
+                    widget.subscribe("onTimescaleMarkClick", function (clientX, clientY, pageX, pageY, screenX, screenY) {
+                        console.log("[onTimescaleMarkClick]", clientX, clientY, pageX, pageY, screenX, screenY)
+                    })
+                    widget.subscribe("drawing_event", function (sourceId, drawingEventType) {
+                        // properties_changed, remove, points_changed, click
+                        if (debug) console.log("[drawing_event]", "id:", sourceId, "event type:", drawingEventType)
+                        if (drawingEventType.indexOf("click") === 0) {
+                            const shape = widget.activeChart().getShapeById(sourceId);
+                            console.info(shape);
+                            const properties = shape.getProperties();
+                            const points = shape.getPoints();
+                            const toolname = shape._source.toolname;
+                            console.log(toolname, points, properties);
+                            if (toolname === "LineToolTrendLine") {
+                                shape.setProperties({ showLabel: !properties.showLabel })
+                                safeSend({
+                                    type: "query_by_index",
+                                    data_type: properties.text, // 全局变量，记录当前查询类型
+                                    index: properties.title
+                                });
+                            }
+                            if (toolname === "LineToolPath") {
+
+                            }
+
+                        }
+                    })
+                });
+            });
+        }
+
+        window.addEventListener("DOMContentLoaded", initOnReady, false);
+        
+        // 在页面加载完成后请求初始数据
+        // document.addEventListener('DOMContentLoaded', function() {
+        //     // 等待一段时间确保WebSocket已连接
+        //     setTimeout(function() {
+        //         safeSend({
+        //             type: "ready",
+        //             exchange: exchange,
+        //             symbol: name,
+        //             freq: step,
+        //             limit: limit,
+        //             generator: generator,
+        //             data_source: exchange
+        //         });
+        //     }, 1000);
+        // }); // 删除或注释掉这个事件监听器
+
+        function changeDataSource(source) {
+            // 获取当前参数
+            const symbol = document.getElementById('stock_code').value || '{{ symbol }}';
+            const timeframe = document.getElementById('search_timeframe').value || '{{ step }}';
+            const limit = document.getElementById('search_limit').value || '{{ limit }}';
+            
+            // 直接通过URL参数刷新页面，保持所有其他参数不变
+            window.location.href = `/?exchange=${source}&symbol=${symbol}&step=${timeframe}&limit=${limit}&generator=False`;
+        }
+        
+        // 搜索股票函数
+        function searchStock() {
+            const symbol = document.getElementById('stock_code').value;
+            if (!symbol) {
+                alert('请输入股票代码');
+                return;
+            }
+
+            let start_date = document.getElementById('search_start_date').value;
+            let end_date = document.getElementById('search_end_date').value;
+            const timeframe_select = document.getElementById('search_timeframe');
+            const selected_step = timeframe_select.value; // 获取选择的 step 值 (如 1, 5, 30, 1440)
+
+            // --- 与后端 / 路由类似的日期处理逻辑 ---
+            const currentDate = new Date();
+            const currentYear = currentDate.getFullYear();
+
+            if (start_date) {
+                try {
+                    start_date = start_date.replace(/-/g, '');
+                    const startYear = parseInt(start_date.substring(0, 4));
+                    if (startYear > currentYear) {
+                        start_date = start_date.replace(startYear.toString(), currentYear.toString());
+                        alert(`开始日期年份大于当前年份，已自动调整为${currentYear}年`);
+                    }
+                    if (start_date.length !== 8 || !/^\d{8}$/.test(start_date)) throw new Error("格式错误");
+                } catch (e) {
+                    const defaultDate = new Date();
+                    defaultDate.setDate(defaultDate.getDate() - 365); // 改为一年前
+                    start_date = defaultDate.toISOString().split('T')[0].replace(/-/g, '');
+                    alert(`开始日期格式无效，已设置为默认值: ${defaultDate.toLocaleDateString()}`);
+                }
+            } else { // 如果为空，设置为一年前
+                 const defaultDate = new Date();
+                 defaultDate.setDate(defaultDate.getDate() - 365);
+                 start_date = defaultDate.toISOString().split('T')[0].replace(/-/g, '');
+            }
+
+            if (end_date) {
+                try {
+                    end_date = end_date.replace(/-/g, '');
+                    const endYear = parseInt(end_date.substring(0, 4));
+                    if (endYear > currentYear) {
+                        end_date = end_date.replace(endYear.toString(), currentYear.toString());
+                        alert(`结束日期年份大于当前年份，已自动调整为${currentYear}年`);
+                    }
+                     if (end_date.length !== 8 || !/^\d{8}$/.test(end_date)) throw new Error("格式错误");
+                } catch (e) {
+                    const defaultDate = new Date();
+                    end_date = defaultDate.toISOString().split('T')[0].replace(/-/g, '');
+                    alert(`结束日期格式无效，已设置为默认值: ${defaultDate.toLocaleDateString()}`);
+                }
+            } else { // 如果为空，设置为今天
+                const defaultDate = new Date();
+                end_date = defaultDate.toISOString().split('T')[0].replace(/-/g, '');
+            }
+
+            if (start_date && end_date && start_date > end_date) {
+                alert("开始日期不能晚于结束日期，将交换日期");
+                [start_date, end_date] = [end_date, start_date];
+            }
+            // --- 日期处理结束 ---
+
+            const kPushMode = document.getElementById('k_push_mode').checked ? 1 : 0;
+
+            const dataSource = "QMT"; // 固定为 qmt
+
+            console.log(`搜索股票: ${symbol}, 数据源: ${dataSource}, 周期step: ${selected_step}, 开始日期: ${start_date}, 结束日期: ${end_date}`);
+
+            // 构建URL参数
+            let urlParams = `?exchange=${dataSource}&symbol=${symbol}&step=${selected_step}&generator=False`;
+            if (start_date) {
+                urlParams += `&start_date=${start_date}`;
+            }
+            if (end_date) {
+                urlParams += `&end_date=${end_date}`;
+            }
+            urlParams += `&zhu_k_push=${kPushMode}`; // 新增
+
+            // 刷新页面
+            window.location.href = urlParams;
+        }
+        
+        function toggleSearchForm() {
+            const searchForm = document.getElementById('search_form');
+            const toggleBtn = document.getElementById('search_toggle');
+            const symbol = document.getElementById('stock_code') ? document.getElementById('stock_code').value : '{{ symbol }}';
+            const codeSpan = toggleBtn.querySelector('.stock-code');
+            const arrowSpan = toggleBtn.querySelector('.arrow');
+            if (searchForm.classList.contains('expanded')) {
+                searchForm.classList.remove('expanded');
+                codeSpan.textContent = symbol;
+                arrowSpan.innerHTML = '&#9660;'; // 下箭头
+                localStorage.setItem('searchFormExpanded', 'false');
+            } else {
+                searchForm.classList.add('expanded');
+                codeSpan.textContent = '';
+                arrowSpan.innerHTML = '&#9650;'; // 上箭头
+                localStorage.setItem('searchFormExpanded', 'true');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchForm = document.getElementById('search_form');
+            const toggleBtn = document.getElementById('search_toggle');
+            const symbol = document.getElementById('stock_code') ? document.getElementById('stock_code').value : '{{ symbol }}';
+            const codeSpan = toggleBtn.querySelector('.stock-code');
+            const arrowSpan = toggleBtn.querySelector('.arrow');
+            const isExpanded = localStorage.getItem('searchFormExpanded') === 'true'; // 默认折叠
+            if (isExpanded) {
+                searchForm.classList.add('expanded');
+                codeSpan.textContent = '';
+                arrowSpan.innerHTML = '&#9650;';
+            } else {
+                searchForm.classList.remove('expanded');
+                codeSpan.textContent = symbol;
+                arrowSpan.innerHTML = '&#9660;';
+            }
+        });        
+        // 清除所有图形的函数
+        function clearAllShapes() {
+            if (window.tvWidget) {
+                try {
+                    // 获取所有图形并删除
+                    const shapes = window.tvWidget.activeChart().getAllShapes();
+                    shapes.forEach(({id}) => {
+                        try {
+                            window.tvWidget.activeChart().removeEntity(id);
+                        } catch (e) {
+                            console.log("删除图形失败:", e);
+                        }
+                    });
+                    
+                    // 清空shape_ids映射表
+                    for (let key in shape_ids) {
+                        delete shape_ids[key];
+                    }
+                    
+                    console.log("清除所有图形完成");
+                } catch (e) {
+                    console.log("清除图形时出错:", e);
+                }
+            }
+        }
+
+        // 添加股票即时搜索功能
+        function searchStockInfo() {
+            const codeInput = document.getElementById('stock_code');
+            const searchCode = codeInput.value.trim();
+            const resultsDiv = document.getElementById('search_results');
+            
+            if (!searchCode) {
+                resultsDiv.style.display = 'none';
+                return;
+            }
+            
+            // 调用后端API获取股票信息
+            fetch(`/search?code=${searchCode}`)
+                .then(response => response.json())
+                .then(data => {
+                    resultsDiv.innerHTML = '';
+                    resultsDiv.style.display = 'none';
+                    
+                    if (data.QuotationCodeTable && data.QuotationCodeTable.Data && data.QuotationCodeTable.Data.length > 0) {
+                        const stocks = data.QuotationCodeTable.Data;
+                        let filteredStocks = [];
+                        
+                        // 筛选只显示深A或沪A的股票
+                        stocks.forEach(stock => {
+                            if (stock.SecurityTypeName === '深A' || stock.SecurityTypeName === '沪A') {
+                                filteredStocks.push(stock);
+                            }
+                        });
+                        
+                        // 如果没有符合条件的股票，显示提示信息
+                        if (filteredStocks.length === 0) {
+                            const item = document.createElement('div');
+                            item.className = 'stock-item';
+                            item.textContent = '未找到匹配的A股';
+                            resultsDiv.appendChild(item);
+                            resultsDiv.style.display = 'block';
+                            return;
+                        }
+                        
+                        // 显示筛选后的搜索结果
+                        filteredStocks.forEach(stock => {
+                            const item = document.createElement('div');
+                            item.className = 'stock-item';
+                            item.innerHTML = `<span class="stock-code">${stock.Code}</span> <span class="stock-name">${stock.Name}</span> <span style="color:#888;font-size:11px;">${stock.SecurityTypeName || ''}</span>`;
+                            
+                            // 点击搜索结果项时自动填充并执行搜索
+                            item.addEventListener('click', () => {
+                                // 根据MarketType添加前缀
+                                let prefix = '';
+                                if (stock.MarketType === '1') {
+                                    prefix = 'sh';  // 沪市
+                                } else if (stock.MarketType === '2') {
+                                    prefix = 'sz';  // 深市
+                                }
+                                
+                                // 填充代码，包含前缀
+                                codeInput.value = prefix + stock.Code;
+                                resultsDiv.style.display = 'none';
+                                // 可选：直接执行查询
+                                // searchStock();
+                            });
+                            
+                            resultsDiv.appendChild(item);
+                        });
+                        
+                        resultsDiv.style.display = 'block';
+                    } else if (data.status === 'error') {
+                        const item = document.createElement('div');
+                        item.className = 'stock-item';
+                        item.textContent = data.message || '查询出错';
+                        resultsDiv.appendChild(item);
+                        resultsDiv.style.display = 'block';
+                    } else {
+                        const item = document.createElement('div');
+                        item.className = 'stock-item';
+                        item.textContent = '未找到匹配的股票';
+                        resultsDiv.appendChild(item);
+                        resultsDiv.style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('搜索出错:', error);
+                    resultsDiv.innerHTML = '<div class="stock-item">搜索出错，请重试</div>';
+                    resultsDiv.style.display = 'block';
+                });
+        }
+        
+        // 防抖函数，减少搜索请求频率
+        function debounce(func, wait) {
+            let timeout;
+            return function() {
+                const context = this;
+                const args = arguments;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => {
+                    func.apply(context, args);
+                }, wait);
+            };
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化原有功能
+            const searchForm = document.getElementById('search_form');
+            const toggleBtn = document.getElementById('search_toggle');
+            const symbol = document.getElementById('stock_code') ? document.getElementById('stock_code').value : '{{ symbol }}';
+            const codeSpan = toggleBtn.querySelector('.stock-code');
+            const arrowSpan = toggleBtn.querySelector('.arrow');
+            const isExpanded = localStorage.getItem('searchFormExpanded') === 'true'; // 默认折叠
+            if (isExpanded) {
+                searchForm.classList.add('expanded');
+                codeSpan.textContent = '';
+                arrowSpan.innerHTML = '&#9650;';
+            } else {
+                searchForm.classList.remove('expanded');
+                codeSpan.textContent = symbol;
+                arrowSpan.innerHTML = '&#9660;';
+            }
+            
+            // 添加即时搜索功能
+            const codeInput = document.getElementById('stock_code');
+            if (codeInput) {
+                // 使用防抖技术，避免过多请求
+                const debouncedSearch = debounce(searchStockInfo, 300);
+                codeInput.addEventListener('input', debouncedSearch);
+                
+                // 点击外部区域隐藏搜索结果
+                document.addEventListener('click', function(e) {
+                    const resultsDiv = document.getElementById('search_results');
+                    if (e.target !== codeInput && e.target !== resultsDiv && !resultsDiv.contains(e.target)) {
+                        resultsDiv.style.display = 'none';
+                    }
+                });
+            }
+        });
+    </script>
+</head>
+
+<body style="margin:0;">
+    <div id="status_indicator">
+        <span id="status-dot" class="status-dot disconnected"></span>
+        <span id="status-text">等待连接...</span>
+        <span style="margin-left: 10px; border-left: 1px solid #555; padding-left: 10px;" id="last-update-time">等待更新...</span>
+    </div>
+    
+    <!-- <div id="data_source_selection">
+        <button id="eastmoney_btn" onclick="changeDataSource('eastmoney')" class="{{ 'active' if exchange == 'eastmoney' else '' }}">东方财富</button>
+        <button id="longhuvip_btn" onclick="changeDataSource('longhuvip')" class="{{ 'active' if exchange == 'longhuvip' else '' }}">龙湖API</button>
+        <button id="bitstamp_btn" onclick="changeDataSource('bitstamp')" class="{{ 'active' if exchange == 'bitstamp' else '' }}">Bitstamp</button>
+    </div> -->
+    
+    <div id="search_form_container">
+        <button id="search_toggle" onclick="toggleSearchForm()"><span class="stock-code">{{ symbol }}</span><span class="arrow">&#9660;</span></button>
+        <div id="search_form">
+            <!-- 新增：逐K推送开关 -->
+            <div class="form-group">
+                <label for="k_push_mode">逐K推送</label>
+                <input type="checkbox" id="k_push_mode" {% if zhu_k_push|int == 1 %}checked{% endif %} style="width:16px;height:16px;">
+                <span style="font-size:12px;color:#aaa;">勾选启用</span>
+            </div>
+            
+            <div class="form-group">
+                <label>股票代码:</label>
+                <input type="text" id="stock_code" value="{{ symbol }}" placeholder="如: 600519">
+            </div>
+            
+            <!-- 添加搜索结果容器 -->
+            <div id="search_results"></div>
+            
+            <div class="form-group">
+                <label>开始日期:</label>
+                <input type="date" id="search_start_date" value="{% if start_date %}{% if start_date|string|length >= 8 %}{{ start_date[0:4] }}-{{ start_date[4:6] }}-{{ start_date[6:8] }}{% endif %}{% endif %}">
+            </div>
+            
+            <div class="form-group">
+                <label>结束日期:</label>
+                <input type="date" id="search_end_date" value="{% if end_date %}{% if end_date|string|length >= 8 %}{{ end_date[0:4] }}-{{ end_date[4:6] }}-{{ end_date[6:8] }}{% endif %}{% endif %}">
+            </div>
+
+            <div class="form-divider"></div>
+            
+            <div class="form-group-inline">
+                    <label>周期:</label>
+                    <select id="search_timeframe" style="display: block; font-size: 12px; margin-bottom: 5px;">
+                        <option value="1" {{ 'selected' if step == '1' else '' }}>1分钟</option>
+                        <option value="5" {{ 'selected' if step == '5' else '' }}>5分钟</option>
+                        <option value="15" {{ 'selected' if step == '15' else '' }}>15分钟</option>
+                        <option value="30" {{ 'selected' if step == '30' else '' }}>30分钟</option>
+                        <option value="60" {{ 'selected' if step == '60' else '' }}>1小时</option>
+                        <option value="1440" {{ 'selected' if step == 'd' else '' }}>日线</option>
+                        <option value="604800" {{ 'selected' if step == 'w' else '' }}>周线</option>
+                        <option value="2592000" {{ 'selected' if step == 'mon' else '' }}>月线</option>
+                        <option value="31536000" {{ 'selected' if step == 'y' else '' }}>年线</option>
+                    </select>
+                <!-- <div style="width: 48%;">
+                    <label style="display: block; font-size: 12px; margin-bottom: 5px;">数据量:</label>
+                    <select id="search_limit">
+                        <option value="300">300条</option>
+                        <option value="500" selected>500条</option>
+                        <option value="1000">1000条</option>
+                        <option value="2000">2000条</option>
+                    </select>
+                </div> -->
+            </div>
+            
+            <button onclick="searchStock()" style="width: 100%; margin-top: 10px;">查询</button>
+        </div>
+    </div>
+    
+    <div id="tv_chart_container"></div>
+</body>
+
+</html>
